@@ -11,6 +11,7 @@ pub mod status;
 
 use crate::types::{FinishedWork, RunningWork};
 use anyhow::Result;
+use axum::extract::DefaultBodyLimit;
 use axum::{routing::{delete, get, post}, Router};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,18 +22,23 @@ use uuid::Uuid;
 pub const LOADED_DIR: &str = "./loaded";
 pub const FINISHED_DIR: &str = "./finished";
 
+/// Los vídeos subidos pueden superar con creces el límite de 2MB que axum
+/// impone por defecto al extractor Multipart; el streaming los escribe a disco
+/// sin buffering completo, así que solo limitamos el tamaño de cada upload.
+const MAX_UPLOAD_BYTES: usize = 8 * 1024 * 1024 * 1024;
+
 pub struct RunningEntry {
     pub work: RunningWork,
 }
 
 #[derive(Default)]
-pub struct Inner {
+pub struct Works {
     pub running: HashMap<Uuid, RunningEntry>,
     pub finished: HashMap<Uuid, FinishedWork>,
 }
 
 pub struct WorkerState {
-    pub inner: Mutex<Inner>,
+    pub works: Mutex<Works>,
     pub max_works: usize,
 }
 
@@ -55,7 +61,7 @@ pub async fn run(port: u16, max_works: usize) -> Result<()> {
     tokio::fs::create_dir_all(FINISHED_DIR).await?;
 
     let state: Shared = Arc::new(WorkerState {
-        inner: Mutex::new(Inner::default()),
+        works: Mutex::new(Works::default()),
         max_works,
     });
 
@@ -63,7 +69,11 @@ pub async fn run(port: u16, max_works: usize) -> Result<()> {
         .route("/health", get(status::health))
         .route("/running", get(status::running))
         .route("/finished", get(status::finished))
-        .route("/load", post(files::load))
+        .merge(
+            Router::new()
+                .route("/load", post(files::load))
+                .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
+        )
         .route("/loaded", get(files::loaded))
         .route("/crf-search", post(jobs::crf_search))
         .route("/encode", post(jobs::encode))

@@ -53,7 +53,7 @@ pub fn split_args(s: &str) -> Result<Vec<String>> {
 /// en forma separada ("-crf", "24") o unida ("-crf=24", "-b:v=1M").
 pub fn args_fix_quality(args: &[String]) -> bool {
     args.iter().any(|a| {
-        a == "-crf" || a.starts_with("-crf=") || a == "-b:v" || a.starts_with("-b:v=")
+        a == "-crf" || a.starts_with("-crf") || a == "-b:v" || a.starts_with("-b:v")
     })
 }
 

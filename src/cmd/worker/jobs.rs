@@ -24,15 +24,15 @@ async fn reserve(
     crate::paths::normalize_container(&req.container)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    let mut inner = state.inner.lock().await;
+    let mut works = state.works.lock().await;
 
     // ¿Ya existe este ID? Comprobar running y finished.
-    let existing = inner
+    let existing = works
         .running
         .get(&req.task_id)
         .map(|e| (e.work.work_type, e.work.filename.clone()))
         .or_else(|| {
-            inner
+            works
                 .finished
                 .get(&req.task_id)
                 .map(|f| (f.work_type, f.filename.clone()))
@@ -56,7 +56,7 @@ async fn reserve(
     }
 
     // Capacidad.
-    if inner.running.len() >= state.max_works {
+    if works.running.len() >= state.max_works {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             "worker sin capacidad disponible".to_string(),
@@ -64,7 +64,7 @@ async fn reserve(
     }
 
     // Reserva atómica: registrar como activo antes de lanzar el proceso.
-    inner.running.insert(
+    works.running.insert(
         req.task_id,
         RunningEntry {
             work: RunningWork {
@@ -80,9 +80,9 @@ async fn reserve(
 
 /// Mueve una tarea de running a finished (una única entrada de resultado).
 async fn publish(state: &Shared, result: FinishedWork) {
-    let mut inner = state.inner.lock().await;
-    inner.running.remove(&result.task_id);
-    inner.finished.insert(result.task_id, result);
+    let mut works = state.works.lock().await;
+    works.running.remove(&result.task_id);
+    works.finished.insert(result.task_id, result);
 }
 
 pub async fn crf_search(
@@ -267,14 +267,14 @@ fn tail(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cmd::worker::{Inner, WorkerState};
+    use crate::cmd::worker::{Works, WorkerState};
     use std::sync::Arc;
     use tokio::sync::Mutex;
     use uuid::Uuid;
 
     fn state(max_works: usize) -> Shared {
         Arc::new(WorkerState {
-            inner: Mutex::new(Inner::default()),
+            works: Mutex::new(Works::default()),
             max_works,
         })
     }
@@ -313,7 +313,7 @@ mod tests {
         reserve(&st, WorkType::Encode, &req(id, "a.mkv")).await.unwrap();
         // Mismo ID, misma tarea: éxito sin lanzar otro proceso.
         reserve(&st, WorkType::Encode, &req(id, "a.mkv")).await.unwrap();
-        assert_eq!(st.inner.lock().await.running.len(), 1);
+        assert_eq!(st.works.lock().await.running.len(), 1);
         // Mismo ID, otra tarea: conflicto 409.
         let other = reserve(&st, WorkType::CrfSearch, &req(id, "a.mkv")).await;
         assert!(matches!(other, Err((StatusCode::CONFLICT, _))));
@@ -328,6 +328,6 @@ mod tests {
             let r = reserve(&st, WorkType::Encode, &req(Uuid::new_v4(), bad)).await;
             assert!(matches!(r, Err((StatusCode::BAD_REQUEST, _))), "{bad:?}");
         }
-        assert!(st.inner.lock().await.running.is_empty());
+        assert!(st.works.lock().await.running.is_empty());
     }
 }

@@ -46,7 +46,7 @@ impl Orchestrator {
                     .push_back(Task::new(v, WorkType::Encode, config.ffmpeg_args.clone()));
             } else {
                 queues
-                    .crf
+                    .crf_search
                     .push_back(Task::new(v, WorkType::CrfSearch, config.ab_av1_args.clone()));
             }
         }

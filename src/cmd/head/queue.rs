@@ -36,7 +36,7 @@ impl Task {
 /// Cola A: búsquedas de CRF. Cola B: codificaciones (prioritarias).
 #[derive(Default)]
 pub struct Queues {
-    pub crf: VecDeque<Task>,
+    pub crf_search: VecDeque<Task>,
     pub encode: VecDeque<Task>,
 }
 
@@ -45,18 +45,18 @@ impl Queues {
     /// primero Encode, después CrfSearch; primero con afinidad a este worker,
     /// después sin afinidad.
     pub fn pop_for(&mut self, worker: usize) -> Option<Task> {
-        pop_from(&mut self.encode, worker).or_else(|| pop_from(&mut self.crf, worker))
+        pop_from(&mut self.encode, worker).or_else(|| pop_from(&mut self.crf_search, worker))
     }
 
     pub fn requeue_front(&mut self, task: Task) {
         match task.work_type {
             WorkType::Encode => self.encode.push_front(task),
-            WorkType::CrfSearch => self.crf.push_front(task),
+            WorkType::CrfSearch => self.crf_search.push_front(task),
         }
     }
 
     pub fn remove(&mut self, id: &Uuid) -> Option<Task> {
-        for q in [&mut self.encode, &mut self.crf] {
+        for q in [&mut self.encode, &mut self.crf_search] {
             if let Some(pos) = q.iter().position(|t| &t.id == id) {
                 return q.remove(pos);
             }
@@ -65,7 +65,7 @@ impl Queues {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.crf.is_empty() && self.encode.is_empty()
+        self.crf_search.is_empty() && self.encode.is_empty()
     }
 }
 
@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn encode_has_priority_over_crf() {
         let mut q = Queues::default();
-        q.crf.push_back(task(WorkType::CrfSearch, None));
+        q.crf_search.push_back(task(WorkType::CrfSearch, None));
         q.encode.push_back(task(WorkType::Encode, None));
         assert_eq!(q.pop_for(0).unwrap().work_type, WorkType::Encode);
         assert_eq!(q.pop_for(0).unwrap().work_type, WorkType::CrfSearch);

@@ -67,6 +67,10 @@ pub async fn load(
                     return Err(err(StatusCode::INTERNAL_SERVER_ERROR, e));
                 }
 
+                tokio::fs::rename(&tmp, loaded_path(&params.task_id))
+                    .await
+                    .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
                 return Ok(StatusCode::OK);
             }
             _ => {}
@@ -102,8 +106,8 @@ pub async fn download(
         .map_err(|_| err(StatusCode::BAD_REQUEST, "task_id no es un UUID"))?;
 
     let final_name = {
-        let inner = state.inner.lock().await;
-        match inner.finished.get(&id) {
+        let works = state.works.lock().await;
+        match works.finished.get(&id) {
             Some(f)
                 if f.work_type == WorkType::Encode && f.status == WorkStatus::Succeeded =>
             {
@@ -135,11 +139,11 @@ pub async fn clear(
     State(state): State<Shared>,
     Json(req): Json<ClearRequest>,
 ) -> StatusCode {
-    let existed = {
-        let mut inner = state.inner.lock().await;
-        inner.finished.remove(&req.task_id).is_some()
+    let exists = {
+        let mut works = state.works.lock().await;
+        works.finished.remove(&req.task_id).is_some()
     };
-    if existed {
+    if exists {
         let _ = tokio::fs::remove_file(finished_path(&req.task_id)).await;
         let _ = tokio::fs::remove_file(loaded_path(&req.task_id)).await;
     }
