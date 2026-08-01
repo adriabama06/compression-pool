@@ -1,0 +1,12 @@
+workers = ["http://127.0.0.1:9111"]
+
+[folders]
+input-folder = "./inputs"
+output-folder = "./outputs"
+
+[crf-search]
+ab-av1-arguments = "--preset 4 --scd false --pix-format yuv420p --min-vmaf 95"
+
+[encoder]
+ffmpeg-arguments = "-c:v libsvtav1 -preset 4 -pix_fmt yuv420p -svtav1-params scd=0 -c:a libopus -b:a 96k"
+ffmpeg-container = "mp4"
