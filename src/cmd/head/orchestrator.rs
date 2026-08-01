@@ -1,5 +1,5 @@
-//! Orquestador del head: escaneo, planificación, sondeo, reintentos, descarga
-//! y publicación.
+//! Head orchestrator: scanning, scheduling, polling, retries, download
+//! and publishing.
 
 use super::client::{SendOutcome, WorkerClient};
 use super::queue::{Queues, Task, MAX_ATTEMPTS};
@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
-/// Tiempo que una tarea aceptada puede desaparecer de /running y /finished
-/// antes de reenviarla al mismo worker con el mismo task_id.
+/// How long an accepted task may disappear from /running and /finished
+/// before it is resent to the same worker with the same task_id.
 const MISSING_TIMEOUT: Duration = Duration::from_secs(5);
 const DOWNLOAD_ATTEMPTS: u32 = 3;
 
@@ -32,7 +32,7 @@ pub struct Orchestrator {
 }
 
 impl Orchestrator {
-    /// Construye el orquestador: escanea la entrada y crea las tareas iniciales.
+    /// Builds the orchestrator: scans the input and creates the initial tasks.
     pub fn new(config: Config) -> Result<Self> {
         let videos = crate::paths::scan_videos(&config.input_folder)?;
         crate::paths::check_output_collisions(&videos, &config.container)?;
@@ -66,7 +66,7 @@ impl Orchestrator {
         })
     }
 
-    /// Espera a que todos los workers configurados respondan a /health.
+    /// Waits until all configured workers respond to /health.
     async fn wait_all_healthy(&self) {
         loop {
             let mut pending = Vec::new();
@@ -78,14 +78,14 @@ impl Orchestrator {
             if pending.is_empty() {
                 return;
             }
-            tracing::info!(?pending, "esperando a que todos los workers respondan");
+            tracing::info!(?pending, "waiting for all workers to respond");
             tokio::time::sleep(POLL_INTERVAL).await;
         }
     }
 
     pub async fn run(mut self) -> Result<()> {
         self.wait_all_healthy().await;
-        tracing::info!("todos los workers disponibles; comienza la planificación");
+        tracing::info!("all workers available; scheduling begins");
 
         while !self.queues.is_empty() || !self.active.is_empty() {
             let snapshots = self.poll_workers().await;
@@ -98,15 +98,15 @@ impl Orchestrator {
 
         if !self.failures.is_empty() {
             for (f, why) in &self.failures {
-                tracing::error!("fallo en {f}: {why}");
+                tracing::error!("failure on {f}: {why}");
             }
-            bail!("{} vídeo(s) fallaron", self.failures.len());
+            bail!("{} video(s) failed", self.failures.len());
         }
-        tracing::info!("todos los vídeos procesados correctamente");
+        tracing::info!("all videos processed successfully");
         Ok(())
     }
 
-    /// Sondea /running y /finished de cada worker sin que un fallo bloquee a los demás.
+    /// Polls /running and /finished of each worker without a failure blocking the others.
     async fn poll_workers(&self) -> Vec<Option<(crate::types::RunningResponse, crate::types::FinishedResponse)>> {
         let futures = self.clients.iter().map(|c| async {
             let running = c.running().await.ok()?;
@@ -116,8 +116,8 @@ impl Orchestrator {
         futures_util::future::join_all(futures).await
     }
 
-    /// Adopta trabajos que un worker ejecuta pero el head aún tiene en cola, y
-    /// marca como presentes los activos observados.
+    /// Adopts jobs a worker is running but the head still has queued, and
+    /// marks observed active tasks as present.
     fn adopt_and_track(
         &mut self,
         snapshots: &[Option<(crate::types::RunningResponse, crate::types::FinishedResponse)>],
@@ -126,7 +126,7 @@ impl Orchestrator {
             let Some((running, finished)) = snap else { continue };
             for w in &running.works {
                 if let Some(task) = self.queues.remove(&w.id) {
-                    tracing::info!(task = %w.id, worker = i, "adoptando tarea ya en ejecución");
+                    tracing::info!(task = %w.id, worker = i, "adopting already-running task");
                     self.active.insert(
                         w.id,
                         ActiveTask { task, worker: i, missing_since: None },
@@ -145,7 +145,7 @@ impl Orchestrator {
         }
     }
 
-    /// Procesa los resultados terminados que correspondan a tareas activas.
+    /// Processes finished results that match active tasks.
     async fn handle_finished(
         &mut self,
         snapshots: &[Option<(crate::types::RunningResponse, crate::types::FinishedResponse)>],
@@ -157,16 +157,16 @@ impl Orchestrator {
                 if active.worker != i {
                     continue;
                 }
-                // Validar que el resultado corresponde al tipo de tarea y archivo esperados.
+                // Verify the result matches the expected task type and file.
                 if f.work_type != active.task.work_type {
-                    tracing::warn!(task = %f.task_id, "resultado con tipo inesperado; ignorando");
+                    tracing::warn!(task = %f.task_id, "result with unexpected type; ignoring");
                     continue;
                 }
                 let task = active.task.clone();
                 match f.status {
                     WorkStatus::Succeeded => {
                         if let Err(e) = self.handle_success(i, &task, f).await {
-                            tracing::error!("error procesando resultado: {e:#}");
+                            tracing::error!("error processing result: {e:#}");
                         }
                         self.active.remove(&f.task_id);
                     }
@@ -184,41 +184,41 @@ impl Orchestrator {
         match task.work_type {
             WorkType::CrfSearch => {
                 if f.metadata == NO_CRF_METADATA {
-                    // No hay CRF adecuado: copiar el original preservándolo.
+                    // No suitable CRF: copy the original preserving it.
                     let src = self.config.input_folder.join(&task.filename);
                     let dst = self.config.output_folder.join(&task.filename);
                     tokio::fs::copy(&src, &dst).await?;
-                    tracing::info!("{}: sin CRF adecuado; original copiado a salida", task.filename);
+                    tracing::info!("{}: no suitable CRF; original copied to output", task.filename);
                 } else {
                     let crf: u32 = f
                         .metadata
                         .parse()
-                        .context("CRF devuelto no es un entero")?;
+                        .context("returned CRF is not an integer")?;
                     if crf > 63 {
-                        bail!("CRF fuera de rango: {crf}");
+                        bail!("CRF out of range: {crf}");
                     }
                     let mut args = self.config.ffmpeg_args.clone();
                     args.push("-crf".into());
                     args.push(crf.to_string());
                     let mut encode = Task::new(task.filename.clone(), WorkType::Encode, args);
-                    encode.affinity = Some(worker); // el archivo ya está en ese worker
-                    tracing::info!("{}: CRF {crf} encontrado; encolando codificación", task.filename);
+                    encode.affinity = Some(worker); // the file is already on that worker
+                    tracing::info!("{}: CRF {crf} found; queuing encode", task.filename);
                     self.queues.encode.push_back(encode);
                 }
-                // El resultado de crf-search ya se procesó: limpiar.
+                // The crf-search result has already been processed: clean up.
                 self.clients[worker].clear(task.id).await?;
             }
             WorkType::Encode => {
                 self.download_and_publish(worker, task, f).await?;
-                // Solo después de publicar correctamente se limpia el worker.
+                // Only after publishing successfully is the worker cleaned up.
                 self.clients[worker].clear(task.id).await?;
             }
         }
         Ok(())
     }
 
-    /// Descarga el resultado (con reintentos) a un temporal en outputs/, copia
-    /// las fechas del original y renombra atómicamente al destino final.
+    /// Downloads the result (with retries) to a temporary file in outputs/, copies
+    /// the original timestamps and atomically renames to the final destination.
     async fn download_and_publish(
         &self,
         worker: usize,
@@ -239,7 +239,7 @@ impl Orchestrator {
                     break;
                 }
                 Err(e) => {
-                    tracing::warn!(attempt, "descarga fallida: {e:#}");
+                    tracing::warn!(attempt, "download failed: {e:#}");
                     last_err = Some(e);
                     tokio::time::sleep(POLL_INTERVAL).await;
                 }
@@ -247,16 +247,16 @@ impl Orchestrator {
         }
         if let Some(e) = last_err {
             let _ = tokio::fs::remove_file(&tmp).await;
-            return Err(e).context("descarga agotó los reintentos");
+            return Err(e).context("download exhausted its retries");
         }
 
         let meta = tokio::fs::metadata(&tmp).await?;
         if meta.len() == 0 {
             let _ = tokio::fs::remove_file(&tmp).await;
-            bail!("resultado descargado vacío");
+            bail!("downloaded result is empty");
         }
 
-        // Copiar fechas de acceso y modificación del archivo original.
+        // Copy access and modification timestamps of the original file.
         let original = self.config.input_folder.join(&task.filename);
         let orig_meta = std::fs::metadata(&original)?;
         filetime::set_file_times(
@@ -267,11 +267,11 @@ impl Orchestrator {
 
         let dest: PathBuf = self.config.output_folder.join(&f.filename);
         tokio::fs::rename(&tmp, &dest).await?;
-        tracing::info!("{} publicado en {}", task.filename, dest.display());
+        tracing::info!("{} published to {}", task.filename, dest.display());
         Ok(())
     }
 
-    /// Reintenta una tarea fallida (hasta MAX_ATTEMPTS) o registra el fallo.
+    /// Retries a failed task (up to MAX_ATTEMPTS) or records the failure.
     fn retry_or_fail(&mut self, mut task: Task, error: &str) {
         task.attempts += 1;
         if task.attempts >= MAX_ATTEMPTS {
@@ -279,7 +279,7 @@ impl Orchestrator {
                 .push((task.filename.clone(), error.to_string()));
         } else {
             tracing::warn!(
-                "{}: intento {} fallido ({error}); reintentando",
+                "{}: attempt {} failed ({error}); retrying",
                 task.filename,
                 task.attempts
             );
@@ -287,7 +287,7 @@ impl Orchestrator {
         }
     }
 
-    /// Reenvía tareas aceptadas que desaparecieron de running y finished.
+    /// Resends accepted tasks that disappeared from running and finished.
     async fn resend_missing(
         &mut self,
         snapshots: &[Option<(crate::types::RunningResponse, crate::types::FinishedResponse)>],
@@ -296,7 +296,7 @@ impl Orchestrator {
         for id in ids {
             let Some(a) = self.active.get_mut(&id) else { continue };
             if snapshots.get(a.worker).and_then(|s| s.as_ref()).is_none() {
-                continue; // worker caído: esperar al sondeo en el que vuelva
+                continue; // worker down: wait until a poll where it returns
             }
             let missing_since = a.missing_since.get_or_insert_with(Instant::now);
             if missing_since.elapsed() < MISSING_TIMEOUT {
@@ -304,17 +304,17 @@ impl Orchestrator {
             }
             let task = a.task.clone();
             let worker = a.worker;
-            tracing::warn!(task = %id, worker, "tarea desaparecida; reenviando con el mismo task_id");
+            tracing::warn!(task = %id, worker, "task disappeared; resending with the same task_id");
             match self.dispatch(worker, &task).await {
                 Ok(SendOutcome::Accepted) => {
                     self.active.get_mut(&id).unwrap().missing_since = None;
                 }
-                Ok(_) | Err(_) => {} // se volverá a intentar en el próximo ciclo
+                Ok(_) | Err(_) => {} // will be retried on the next cycle
             }
         }
     }
 
-    /// Llena las plazas disponibles de cada worker que responde.
+    /// Fills the available slots of each responding worker.
     async fn schedule(
         &mut self,
         snapshots: &[Option<(crate::types::RunningResponse, crate::types::FinishedResponse)>],
@@ -332,18 +332,18 @@ impl Orchestrator {
                         );
                     }
                     Ok(SendOutcome::Busy) => {
-                        // No la aceptó: liberar afinidad y volver a cola.
+                        // It did not accept: release affinity and requeue.
                         let mut task = task;
                         task.affinity = None;
                         self.queues.requeue_front(task);
                         break;
                     }
                     Ok(SendOutcome::Conflict(e)) => {
-                        self.retry_or_fail(task, &format!("conflicto en worker: {e}"));
+                        self.retry_or_fail(task, &format!("worker conflict: {e}"));
                     }
                     Err(e) => {
-                        // Respuesta ambigua: mantener afinidad con este worker.
-                        tracing::warn!("envío ambiguo a worker {i}: {e:#}");
+                        // Ambiguous response: keep affinity with this worker.
+                        tracing::warn!("ambiguous send to worker {i}: {e:#}");
                         let mut task = task;
                         task.affinity = Some(i);
                         self.queues.requeue_front(task);
@@ -353,7 +353,7 @@ impl Orchestrator {
         }
     }
 
-    /// Sube el archivo (si procede) y envía la solicitud de trabajo.
+    /// Uploads the file (if applicable) and sends the work request.
     async fn dispatch(&self, worker: usize, task: &Task) -> Result<SendOutcome> {
         let client = &self.clients[worker];
         let input = self.config.input_folder.join(&task.filename);

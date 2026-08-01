@@ -1,4 +1,4 @@
-//! Endpoints de estado: health, running y finished.
+//! Status endpoints: health, running and finished.
 
 use super::{Shared};
 use crate::types::{FinishedResponse, RunningResponse};

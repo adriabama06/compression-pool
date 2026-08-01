@@ -1,9 +1,9 @@
-//! Worker: servidor HTTP que recibe vídeos y tareas, ejecuta ab-av1/ffmpeg y
-//! publica resultados.
+//! Worker: HTTP server that receives videos and tasks, runs ab-av1/ffmpeg and
+//! publishes results.
 //!
-//! Los archivos se guardan internamente con el ID de la tarea (no con el
-//! nombre original) para evitar conflictos entre archivos con el mismo nombre.
-//! El nombre final solo se expone al head (metadatos y Content-Disposition).
+//! Files are stored internally with the task ID (not the
+//! original name) to avoid conflicts between files with the same name.
+//! The final name is only exposed to the head (metadata and Content-Disposition).
 
 pub mod files;
 pub mod jobs;
@@ -22,9 +22,9 @@ use uuid::Uuid;
 pub const LOADED_DIR: &str = "./loaded";
 pub const FINISHED_DIR: &str = "./finished";
 
-/// Los vídeos subidos pueden superar con creces el límite de 2MB que axum
-/// impone por defecto al extractor Multipart; el streaming los escribe a disco
-/// sin buffering completo, así que solo limitamos el tamaño de cada upload.
+/// Uploaded videos can far exceed the 2MB limit axum
+/// imposes by default on the Multipart extractor; streaming writes them to disk
+/// without full buffering, so we only cap the size of each upload.
 const MAX_UPLOAD_BYTES: usize = 8 * 1024 * 1024 * 1024;
 
 pub struct RunningEntry {
@@ -82,7 +82,7 @@ pub async fn run(port: u16, max_works: usize) -> Result<()> {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
-    tracing::info!(port, max_works, "worker escuchando");
+    tracing::info!(port, max_works, "worker listening");
     axum::serve(listener, app).await?;
     Ok(())
 }

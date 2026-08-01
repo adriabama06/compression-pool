@@ -1,7 +1,7 @@
-//! Extracción y validación del CRF desde la salida de `ab-av1`.
+//! CRF extraction and validation from `ab-av1` output.
 
-/// Extrae un CRF de la salida de ab-av1. Soporta formatos como "crf 42" y
-/// "CRF: 37". Devuelve el valor validado (0..=63) o None.
+/// Extracts a CRF from ab-av1 output. Supports formats like "crf 42" and
+/// "CRF: 37". Returns the validated value (0..=63) or None.
 pub fn parse_crf(output: &str) -> Option<u32> {
     for line in output.lines() {
         let lower = line.to_ascii_lowercase();
@@ -23,7 +23,7 @@ pub fn parse_crf(output: &str) -> Option<u32> {
     None
 }
 
-/// Detecta si ab-av1 indicó específicamente que no existe un CRF adecuado.
+/// Detects whether ab-av1 specifically indicated no suitable CRF exists.
 pub fn is_no_suitable_crf(output: &str) -> bool {
     output.to_ascii_lowercase().contains("no suitable crf")
 }

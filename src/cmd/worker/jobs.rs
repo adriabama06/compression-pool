@@ -1,4 +1,4 @@
-//! Reserva atómica de capacidad y ejecución de ab-av1 / ffmpeg.
+//! Atomic capacity reservation and ab-av1 / ffmpeg execution.
 
 use super::{encode_tmp_path, finished_path, loaded_path, RunningEntry, Shared};
 use crate::crf;
@@ -10,15 +10,15 @@ use axum::http::StatusCode;
 use axum::Json;
 use tokio::process::Command;
 
-/// Reserva capacidad para una tarea de forma atómica (bajo el mutex) y lanza
-/// el proceso en segundo plano. Idempotente: mismo task_id + mismo tipo y
-/// archivo => éxito sin relanzar.
+/// Atomically reserves capacity for a task (under the mutex) and launches
+/// the process in the background. Idempotent: same task_id + same type and
+/// file => success without relaunching.
 async fn reserve(
     state: &Shared,
     work_type: WorkType,
     req: &WorkRequest,
 ) -> Result<(), (StatusCode, String)> {
-    // Validación de los datos recibidos por red (no confiables).
+    // Validate data received over the network (untrusted).
     crate::paths::validate_filename(&req.filename)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     crate::paths::normalize_container(&req.container)
@@ -26,7 +26,7 @@ async fn reserve(
 
     let mut works = state.works.lock().await;
 
-    // ¿Ya existe este ID? Comprobar running y finished.
+    // Does this ID already exist? Check running and finished.
     let existing = works
         .running
         .get(&req.task_id)
@@ -39,7 +39,7 @@ async fn reserve(
         });
     if let Some((ty, fname)) = existing {
         let same_file = match ty {
-            // En finished de Encode el nombre es el de salida; comparar por stem.
+            // For Encode finished the name is the output one; compare by stem.
             WorkType::Encode => {
                 crate::paths::output_name(&req.filename, &req.container) == fname
                     || req.filename == fname
@@ -47,11 +47,11 @@ async fn reserve(
             WorkType::CrfSearch => req.filename == fname,
         };
         if ty == work_type && same_file {
-            return Ok(()); // duplicado idempotente
+            return Ok(()); // idempotent duplicate
         }
         return Err((
             StatusCode::CONFLICT,
-            format!("task_id {} ya existe como otra tarea", req.task_id),
+            format!("task_id {} already exists as a different task", req.task_id),
         ));
     }
 
@@ -59,11 +59,11 @@ async fn reserve(
     if works.running.len() >= state.max_works {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
-            "worker sin capacidad disponible".to_string(),
+            "worker has no capacity available".to_string(),
         ));
     }
 
-    // Reserva atómica: registrar como activo antes de lanzar el proceso.
+    // Atomic reservation: record as active before launching the process.
     works.running.insert(
         req.task_id,
         RunningEntry {
@@ -78,7 +78,7 @@ async fn reserve(
     Ok(())
 }
 
-/// Mueve una tarea de running a finished (una única entrada de resultado).
+/// Moves a task from running to finished (a single result entry).
 async fn publish(state: &Shared, result: FinishedWork) {
     let mut works = state.works.lock().await;
     works.running.remove(&result.task_id);
@@ -137,16 +137,16 @@ async fn run_crf_search(req: &WorkRequest) -> FinishedWork {
             req,
             WorkType::CrfSearch,
             req.filename.clone(),
-            format!("no se pudo ejecutar ab-av1: {e}"),
+            format!("could not run ab-av1: {e}"),
         ),
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
             let stderr = String::from_utf8_lossy(&out.stderr);
-            tracing::info!(task = %req.task_id, %stdout, %stderr, "ab-av1 finalizado");
+            tracing::info!(task = %req.task_id, %stdout, %stderr, "ab-av1 finished");
             let combined = format!("{stdout}\n{stderr}");
             if !out.status.success() {
                 if crf::is_no_suitable_crf(&combined) {
-                    // Caso especial: no fallar el vídeo; el head copiará el original.
+                    // Special case: do not fail the video; the head will copy the original.
                     return FinishedWork {
                         task_id: req.task_id,
                         work_type: WorkType::CrfSearch,
@@ -184,7 +184,7 @@ async fn run_crf_search(req: &WorkRequest) -> FinishedWork {
                     req,
                     WorkType::CrfSearch,
                     req.filename.clone(),
-                    "no se pudo extraer un CRF válido de la salida de ab-av1".to_string(),
+                    "could not extract a valid CRF from ab-av1 output".to_string(),
                 ),
             }
         }
@@ -195,7 +195,7 @@ async fn run_encode(req: &WorkRequest) -> FinishedWork {
     let input = loaded_path(&req.task_id);
     let tmp = encode_tmp_path(&req.task_id, &req.container);
     let final_path = finished_path(&req.task_id);
-    // Nombre final que tendrá el archivo en el head.
+    // Final name the file will have on the head.
     let final_name = crate::paths::output_name(&req.filename, &req.container);
 
     let output = Command::new("ffmpeg")
@@ -212,11 +212,11 @@ async fn run_encode(req: &WorkRequest) -> FinishedWork {
             req,
             WorkType::Encode,
             req.filename.clone(),
-            format!("no se pudo ejecutar ffmpeg: {e}"),
+            format!("could not run ffmpeg: {e}"),
         ),
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
-            tracing::info!(task = %req.task_id, %stderr, "ffmpeg finalizado");
+            tracing::info!(task = %req.task_id, %stderr, "ffmpeg finished");
             if !out.status.success() {
                 let _ = tokio::fs::remove_file(&tmp).await;
                 return failed(
@@ -226,7 +226,7 @@ async fn run_encode(req: &WorkRequest) -> FinishedWork {
                     format!("ffmpeg exited unsuccessfully: {}", tail(&stderr)),
                 );
             }
-            // Debe producir un archivo no vacío.
+            // It must produce a non-empty file.
             match tokio::fs::metadata(&tmp).await {
                 Ok(m) if m.len() > 0 => {}
                 _ => {
@@ -235,17 +235,17 @@ async fn run_encode(req: &WorkRequest) -> FinishedWork {
                         req,
                         WorkType::Encode,
                         req.filename.clone(),
-                        "ffmpeg produjo un archivo vacío".to_string(),
+                        "ffmpeg produced an empty file".to_string(),
                     );
                 }
             }
-            // Publicación atómica del resultado.
+            // Atomic publishing of the result.
             if let Err(e) = tokio::fs::rename(&tmp, &final_path).await {
                 return failed(
                     req,
                     WorkType::Encode,
                     req.filename.clone(),
-                    format!("no se pudo publicar el resultado: {e}"),
+                    format!("could not publish the result: {e}"),
                 );
             }
             FinishedWork {
@@ -302,8 +302,8 @@ mod tests {
             .iter()
             .filter(|r| matches!(r, Err((StatusCode::TOO_MANY_REQUESTS, _))))
             .count();
-        assert_eq!(ok, 1, "solo una reserva puede tener éxito");
-        assert_eq!(busy, 1, "la otra debe recibir 429");
+        assert_eq!(ok, 1, "only one reservation can succeed");
+        assert_eq!(busy, 1, "the other must receive 429");
     }
 
     #[tokio::test]
@@ -311,10 +311,10 @@ mod tests {
         let st = state(1);
         let id = Uuid::new_v4();
         reserve(&st, WorkType::Encode, &req(id, "a.mkv")).await.unwrap();
-        // Mismo ID, misma tarea: éxito sin lanzar otro proceso.
+        // Same ID, same task: success without launching another process.
         reserve(&st, WorkType::Encode, &req(id, "a.mkv")).await.unwrap();
         assert_eq!(st.works.lock().await.running.len(), 1);
-        // Mismo ID, otra tarea: conflicto 409.
+        // Same ID, different task: conflict 409.
         let other = reserve(&st, WorkType::CrfSearch, &req(id, "a.mkv")).await;
         assert!(matches!(other, Err((StatusCode::CONFLICT, _))));
         let other = reserve(&st, WorkType::Encode, &req(id, "b.mkv")).await;

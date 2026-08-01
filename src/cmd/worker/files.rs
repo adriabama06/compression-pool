@@ -1,8 +1,8 @@
-//! Carga, descarga y limpieza de archivos del worker.
+//! Worker file upload, download and cleanup.
 //!
-//! Los archivos se almacenan por task_id, no por nombre original, evitando
-//! conflictos entre archivos con el mismo nombre. El nombre final viaja en los
-//! metadatos y en la cabecera Content-Disposition de la descarga.
+//! Files are stored by task_id, not by original name, avoiding
+//! conflicts between files with the same name. The final name travels in the
+//! metadata and in the download Content-Disposition header.
 
 use super::{finished_path, loaded_path, Shared, LOADED_DIR};
 use crate::types::{ClearRequest, ErrorResponse, LoadedResponse, WorkStatus, WorkType};
@@ -21,14 +21,14 @@ fn err(status: StatusCode, msg: impl Into<String>) -> (StatusCode, Json<ErrorRes
     )
 }
 
-/// Parámetros de query de POST /load: task_id va en la URL, no en el multipart.
+/// Query parameters of POST /load: task_id goes in the URL, not in the multipart.
 #[derive(serde::Deserialize)]
 pub struct LoadParams {
     pub task_id: Uuid,
 }
 
-/// POST /load?task_id={uuid}: recibe multipart con el campo "file".
-/// Escritura en streaming a un temporal y renombrado atómico.
+/// POST /load?task_id={uuid}: receives multipart with the "file" field.
+/// Streaming write to a temporary file and atomic rename.
 pub async fn load(
     State(_state): State<Shared>,
     Query(params): Query<LoadParams>,
@@ -77,10 +77,10 @@ pub async fn load(
         }
     }
 
-    Err(err(StatusCode::BAD_REQUEST, "falta el campo file"))
+    Err(err(StatusCode::BAD_REQUEST, "missing file field"))
 }
 
-/// GET /loaded: lista los archivos cargados (IDs de tarea). Informativo.
+/// GET /loaded: lists the loaded files (task IDs). Informational.
 pub async fn loaded(State(_state): State<Shared>) -> Json<LoadedResponse> {
     let mut files = Vec::new();
     if let Ok(mut rd) = tokio::fs::read_dir(LOADED_DIR).await {
@@ -95,15 +95,15 @@ pub async fn loaded(State(_state): State<Shared>) -> Json<LoadedResponse> {
     Json(LoadedResponse { files })
 }
 
-/// GET /finished/download/{task_id}: descarga en streaming un resultado.
-/// Solo se permite si existe una tarea Encode terminada con éxito que declara
-/// ese resultado; no se exponen rutas arbitrarias de finished/.
+/// GET /finished/download/{task_id}: streams a result download.
+/// Only allowed if a successfully finished Encode task declares
+/// that result; arbitrary finished/ paths are not exposed.
 pub async fn download(
     State(state): State<Shared>,
     Path(task_id): Path<String>,
 ) -> Result<(HeaderMap, Body), (StatusCode, Json<ErrorResponse>)> {
     let id = Uuid::parse_str(&task_id)
-        .map_err(|_| err(StatusCode::BAD_REQUEST, "task_id no es un UUID"))?;
+        .map_err(|_| err(StatusCode::BAD_REQUEST, "task_id is not a UUID"))?;
 
     let final_name = {
         let works = state.works.lock().await;
@@ -113,16 +113,16 @@ pub async fn download(
             {
                 f.filename.clone()
             }
-            _ => return Err(err(StatusCode::NOT_FOUND, "resultado no disponible")),
+            _ => return Err(err(StatusCode::NOT_FOUND, "result not available")),
         }
     };
 
     let file = tokio::fs::File::open(finished_path(&id))
         .await
-        .map_err(|_| err(StatusCode::NOT_FOUND, "archivo de resultado no encontrado"))?;
+        .map_err(|_| err(StatusCode::NOT_FOUND, "result file not found"))?;
 
     let mut headers = HeaderMap::new();
-    // El head debe recibirlo con el nombre final que tendrá el archivo.
+    // The head must receive it with the final name the file will have.
     let disposition = format!("attachment; filename=\"{}\"", final_name.replace('"', "_"));
     headers.insert(header::CONTENT_DISPOSITION, disposition.parse().unwrap());
     headers.insert(
@@ -133,8 +133,8 @@ pub async fn download(
     Ok((headers, Body::from_stream(ReaderStream::new(file))))
 }
 
-/// DELETE /finished/clear: el head confirma que procesó el resultado.
-/// Idempotente: si ya no existe, responde éxito igualmente.
+/// DELETE /finished/clear: the head confirms it processed the result.
+/// Idempotent: if it no longer exists, it still responds success.
 pub async fn clear(
     State(state): State<Shared>,
     Json(req): Json<ClearRequest>,

@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "compression-pool", about = "Compresión de vídeo distribuida")]
+#[command(name = "compression-pool", about = "Distributed video compression")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -16,14 +16,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Servidor de trabajo: recibe vídeos y ejecuta ab-av1/ffmpeg.
+    /// Work server: receives videos and runs ab-av1/ffmpeg.
     Worker {
         #[arg(long, default_value_t = 9111)]
         port: u16,
         #[arg(long, default_value_t = 1)]
         max_works: usize,
     },
-    /// Coordinador: lee la configuración y distribuye el trabajo.
+    /// Coordinator: reads the configuration and distributes the work.
     Head {
         #[arg(long, default_value = "settings.toml")]
         settings: PathBuf,

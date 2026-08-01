@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Prueba end-to-end: compila el binario, lanza worker + head sobre sample.mp4 y
-# verifica que el resultado llega a outputs/. Al terminar NO borra tmp/ para
-# poder inspeccionar manualmente lo que se generó.
+# End-to-end test: builds the binary, launches worker + head over sample.mp4 and
+# verifies the result reaches outputs/. On finish it does NOT delete tmp/ so you
+# can manually inspect what was generated.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,15 +12,15 @@ OUTPUT="$TMP/outputs/sample.mp4"
 
 for tool in ffmpeg ab-av1; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-        echo "error: falta '$tool' en PATH" >&2
+        echo "error: '$tool' missing from PATH" >&2
         exit 1
     fi
 done
 
-echo "==> compilando binario"
+echo "==> building binary"
 cargo build --manifest-path "$REPO_DIR/Cargo.toml"
 
-echo "==> preparando $TMP"
+echo "==> preparing $TMP"
 rm -rf "$TMP"
 mkdir -p "$TMP/inputs" "$TMP/outputs" "$WORKER_DIR"
 cp "$REPO_DIR/target/debug/compression-pool" "$TMP/"
@@ -41,7 +41,7 @@ ffmpeg-arguments = "-c:v libsvtav1 -preset 8 -pix_fmt yuv420p -svtav1-params scd
 ffmpeg-container = "mp4"
 EOF
 
-echo "==> lanzando worker (puerto $PORT)"
+echo "==> launching worker (port $PORT)"
 (
     cd "$WORKER_DIR"
     exec "$TMP/compression-pool" worker --port "$PORT" --max-works 1 > worker.log 2>&1
@@ -53,7 +53,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> lanzando head"
+echo "==> launching head"
 (
     cd "$TMP"
     exec ./compression-pool head --settings settings.toml > head.log 2>&1
@@ -64,26 +64,26 @@ cleanup
 trap - EXIT
 
 echo
-echo "==> resumen"
+echo "==> summary"
 if [ "$HEAD_STATUS" -ne 0 ]; then
-    echo "ERROR: el head terminó con código $HEAD_STATUS" >&2
+    echo "ERROR: head exited with code $HEAD_STATUS" >&2
     tail -n 30 "$TMP/head.log" >&2
     exit 1
 fi
 
 if [ -s "$OUTPUT" ]; then
-    echo "OK: resultado final en $OUTPUT"
+    echo "OK: final result at $OUTPUT"
     ls -l "$OUTPUT"
 else
-    echo "ERROR: no existe el resultado final en $OUTPUT" >&2
+    echo "ERROR: final result does not exist at $OUTPUT" >&2
     exit 1
 fi
 
 if [ -n "$(ls -A "$WORKER_DIR/loaded" 2>/dev/null)" ] \
     || [ -n "$(ls -A "$WORKER_DIR/finished" 2>/dev/null)" ]; then
-    echo "AVISO: quedan archivos en loaded/ o finished/ del worker"
+    echo "WARNING: files remain in worker loaded/ or finished/"
 else
-    echo "OK: loaded/ y finished/ del worker quedaron vacíos"
+    echo "OK: worker loaded/ and finished/ are empty"
 fi
 
-echo "==> todo quedó en $TMP para inspección manual"
+echo "==> everything was left in $TMP for manual inspection"

@@ -1,12 +1,12 @@
-//! Validación de nombres de archivo, contenedores y cálculo de nombres de salida.
+//! Filename, container validation and output name computation.
 
 use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 
 pub const VIDEO_EXTENSIONS: [&str; 5] = ["mp4", "mkv", "mov", "avi", "webm"];
 
-/// Un nombre de archivo es válido si es simple: sin '/', '\\', sin caracteres
-/// de control y distinto de "." y "..".
+/// A filename is valid if it is simple: no '/', '\\', no control
+/// characters and different from "." and "..".
 pub fn is_valid_filename(name: &str) -> bool {
     if name.is_empty() || name == "." || name == ".." {
         return false;
@@ -18,25 +18,25 @@ pub fn is_valid_filename(name: &str) -> bool {
 
 pub fn validate_filename(name: &str) -> Result<()> {
     if !is_valid_filename(name) {
-        bail!("nombre de archivo no válido: {name:?}");
+        bail!("invalid filename: {name:?}");
     }
     Ok(())
 }
 
-/// Normaliza el contenedor: vacío -> "mp4". Debe ser una extensión sencilla
-/// formada solo por letras o números ASCII.
+/// Normalizes the container: empty -> "mp4". It must be a simple extension
+/// made only of ASCII letters or numbers.
 pub fn normalize_container(container: &str) -> Result<String> {
     let c = container.trim();
     if c.is_empty() {
         return Ok("mp4".to_string());
     }
     if !c.chars().all(|c| c.is_ascii_alphanumeric()) {
-        bail!("contenedor no válido: {container:?} (solo letras/números ASCII)");
+        bail!("invalid container: {container:?} (ASCII letters/numbers only)");
     }
     Ok(c.to_string())
 }
 
-/// Comprueba si un nombre de archivo (insensible a mayúsculas) es un vídeo reconocido.
+/// Checks whether a filename (case-insensitive) is a recognized video.
 pub fn is_video(name: &str) -> bool {
     match name.rsplit_once('.') {
         Some((_, ext)) => VIDEO_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()),
@@ -44,7 +44,7 @@ pub fn is_video(name: &str) -> bool {
     }
 }
 
-/// Nombre del archivo de salida: mismo nombre base con la extensión del contenedor.
+/// Output filename: same base name with the container extension.
 pub fn output_name(input: &str, container: &str) -> String {
     let stem = match input.rsplit_once('.') {
         Some((stem, _)) => stem,
@@ -53,25 +53,25 @@ pub fn output_name(input: &str, container: &str) -> String {
     format!("{stem}.{container}")
 }
 
-/// Devuelve error si dos vídeos generarían el mismo nombre de salida.
+/// Returns an error if two videos would generate the same output name.
 pub fn check_output_collisions(files: &[String], container: &str) -> Result<()> {
     let mut seen: HashMap<String, &str> = HashMap::new();
     for f in files {
         let out = output_name(f, container).to_ascii_lowercase();
         if let Some(prev) = seen.insert(out.clone(), f) {
             bail!(
-                "colisión de salida: {prev:?} y {f:?} generarían ambos {out:?}"
+                "output collision: {prev:?} and {f:?} would both generate {out:?}"
             );
         }
     }
     Ok(())
 }
 
-/// Escanea el directorio de entrada y devuelve los vídeos (validados).
+/// Scans the input directory and returns the (validated) videos.
 pub fn scan_videos(input_dir: &std::path::Path) -> Result<Vec<String>> {
     let mut videos = Vec::new();
     let entries = std::fs::read_dir(input_dir)
-        .with_context(|| format!("leyendo {}", input_dir.display()))?;
+        .with_context(|| format!("reading {}", input_dir.display()))?;
     for entry in entries {
         let entry = entry?;
         if !entry.file_type()?.is_file() {

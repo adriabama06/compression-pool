@@ -1,4 +1,4 @@
-//! Cliente HTTP del head: timeouts, upload y descarga en streaming.
+//! Head HTTP client: timeouts, streaming upload and download.
 
 use crate::types::{ClearRequest, FinishedResponse, RunningResponse, WorkRequest};
 use anyhow::{bail, Context, Result};
@@ -15,19 +15,19 @@ pub struct WorkerClient {
     http: reqwest::Client,
 }
 
-/// Resultado de enviar un trabajo a un worker.
+/// Result of sending a job to a worker.
 pub enum SendOutcome {
-    /// El worker aceptó (o ya tenía la tarea: idempotente).
+    /// The worker accepted (or already had the task: idempotent).
     Accepted,
-    /// 429: no la aceptó; se puede liberar la afinidad.
+    /// 429: it did not accept it; the affinity can be released.
     Busy,
-    /// 409: el task_id ya existe como otra tarea.
+    /// 409: the task_id already exists as a different task.
     Conflict(String),
 }
 
 impl WorkerClient {
     pub fn new(base: &str) -> Result<Self> {
-        let mut base = Url::parse(base).context("URL de worker no válida")?;
+        let mut base = Url::parse(base).context("invalid worker URL")?;
         if !base.path().ends_with('/') {
             base.set_path(&(base.path().to_string() + "/"));
         }
@@ -38,14 +38,14 @@ impl WorkerClient {
         Ok(Self { base, http })
     }
 
-    /// Construye una URL uniendo segmentos codificados correctamente
-    /// (espacios, '+', '#', etc. no alteran la ruta).
+    /// Builds a URL joining properly encoded segments
+    /// (spaces, '+', '#', etc. do not alter the path).
     pub fn url_with_segments(&self, segments: &[&str]) -> Result<Url> {
         let mut url = self.base.clone();
         {
             let mut segs = url
                 .path_segments_mut()
-                .map_err(|_| anyhow::anyhow!("URL base no admite segmentos"))?;
+                .map_err(|_| anyhow::anyhow!("base URL does not support segments"))?;
             segs.pop_if_empty();
             for s in segments {
                 segs.push(s);
@@ -58,7 +58,7 @@ impl WorkerClient {
         let url = self.base.join("health")?;
         let resp = self.http.get(url).send().await?;
         if !resp.status().is_success() {
-            bail!("health respondió {}", resp.status());
+            bail!("health responded {}", resp.status());
         }
         Ok(())
     }
@@ -73,7 +73,7 @@ impl WorkerClient {
         Ok(self.http.get(url).send().await?.error_for_status()?.json().await?)
     }
 
-    /// Sube un archivo en streaming como multipart (campo file; task_id en query).
+    /// Streams a file upload as multipart (file field; task_id in query).
     pub async fn upload(&self, task_id: Uuid, filename: &str, path: &Path) -> Result<()> {
         let mut url = self.base.join("load")?;
         url.set_query(Some(&format!("task_id={task_id}")));
@@ -85,7 +85,7 @@ impl WorkerClient {
         let form = reqwest::multipart::Form::new().part("file", part);
         let resp = self.http.post(url).multipart(form).send().await?;
         if !resp.status().is_success() {
-            bail!("upload respondió {}", resp.status());
+            bail!("upload responded {}", resp.status());
         }
         Ok(())
     }
@@ -99,7 +99,7 @@ impl WorkerClient {
             reqwest::StatusCode::CONFLICT => {
                 SendOutcome::Conflict(resp.text().await.unwrap_or_default())
             }
-            s => bail!("{route} respondió {s}"),
+            s => bail!("{route} responded {s}"),
         })
     }
 
@@ -111,7 +111,7 @@ impl WorkerClient {
         self.send_work("encode", req).await
     }
 
-    /// Descarga en streaming un resultado a un archivo temporal local.
+    /// Streams a result download to a local temporary file.
     pub async fn download(&self, task_id: Uuid, dest: &Path) -> Result<()> {
         let url = self.url_with_segments(&["finished", "download", &task_id.to_string()])?;
         let resp = self.http.get(url).send().await?.error_for_status()?;
@@ -124,7 +124,7 @@ impl WorkerClient {
         Ok(())
     }
 
-    /// Confirma que el head ya procesó el resultado. Idempotente.
+    /// Confirms the head has already processed the result. Idempotent.
     pub async fn clear(&self, task_id: Uuid) -> Result<()> {
         let url = self.base.join("finished/clear")?;
         let resp = self
@@ -134,7 +134,7 @@ impl WorkerClient {
             .send()
             .await?;
         if !resp.status().is_success() {
-            bail!("clear respondió {}", resp.status());
+            bail!("clear responded {}", resp.status());
         }
         Ok(())
     }
@@ -154,7 +154,7 @@ mod tests {
             url.as_str(),
             "http://localhost:9111/finished/download/video%20clip+%23.webm"
         );
-        // Debe ser un solo segmento: no altera la ruta.
+        // Must be a single segment: it does not alter the path.
         assert_eq!(url.path_segments().unwrap().count(), 3);
     }
 }

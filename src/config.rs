@@ -1,4 +1,4 @@
-//! Deserialización TOML, validación y separación de argumentos.
+//! TOML deserialization, validation and argument splitting.
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -34,7 +34,7 @@ pub struct Encoder {
     pub ffmpeg_container: String,
 }
 
-/// Configuración validada y lista para usar.
+/// Validated configuration ready to use.
 pub struct Config {
     pub workers: Vec<String>,
     pub input_folder: PathBuf,
@@ -44,13 +44,13 @@ pub struct Config {
     pub container: String,
 }
 
-/// Separa una cadena de argumentos con sintaxis de shell (sin invocar un shell).
+/// Splits an argument string using shell syntax (without invoking a shell).
 pub fn split_args(s: &str) -> Result<Vec<String>> {
-    shell_words::split(s).context("argumentos con comillas sin cerrar")
+    shell_words::split(s).context("arguments with unclosed quotes")
 }
 
-/// Comprueba si los argumentos de ffmpeg ya fijan calidad/tasa (-crf o -b:v),
-/// en forma separada ("-crf", "24") o unida ("-crf=24", "-b:v=1M").
+/// Checks whether the ffmpeg arguments already fix quality/rate (-crf or -b:v),
+/// whether separate ("-crf", "24") or combined ("-crf=24", "-b:v=1M").
 pub fn args_fix_quality(args: &[String]) -> bool {
     args.iter().any(|a| {
         a == "-crf" || a.starts_with("-crf") || a == "-b:v" || a.starts_with("-b:v")
@@ -60,29 +60,29 @@ pub fn args_fix_quality(args: &[String]) -> bool {
 impl Settings {
     pub fn load(path: &Path) -> Result<Settings> {
         let text = std::fs::read_to_string(path)
-            .with_context(|| format!("leyendo {}", path.display()))?;
+            .with_context(|| format!("reading {}", path.display()))?;
         let settings: Settings = toml::from_str(&text)
-            .with_context(|| format!("parseando {}", path.display()))?;
+            .with_context(|| format!("parsing {}", path.display()))?;
         Ok(settings)
     }
 
     pub fn validate(self) -> Result<Config> {
         if self.workers.is_empty() {
-            bail!("debe configurarse al menos un worker");
+            bail!("at least one worker must be configured");
         }
         for w in &self.workers {
-            url::Url::parse(w).with_context(|| format!("URL de worker no válida: {w}"))?;
+            url::Url::parse(w).with_context(|| format!("invalid worker URL: {w}"))?;
         }
 
         let input = &self.folders.input_folder;
         if !input.is_dir() {
             bail!(
-                "la carpeta de entrada no existe o no es un directorio: {}",
+                "the input folder does not exist or is not a directory: {}",
                 input.display()
             );
         }
         std::fs::create_dir_all(&self.folders.output_folder).with_context(|| {
-            format!("creando {}", self.folders.output_folder.display())
+            format!("creating {}", self.folders.output_folder.display())
         })?;
 
         let container = crate::paths::normalize_container(&self.encoder.ffmpeg_container)?;

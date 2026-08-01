@@ -1,10 +1,10 @@
-//! Contratos JSON compartidos entre head y worker.
+//! JSON contracts shared between head and worker.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Metadato especial: ab-av1 indicó que no existe un CRF adecuado.
-/// El head debe copiar el archivo original a la salida.
+/// Special metadata: ab-av1 indicated no suitable CRF exists.
+/// The head must copy the original file to the output.
 pub const NO_CRF_METADATA: &str = "no-suitable-crf";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,7 +19,7 @@ pub enum WorkStatus {
     Failed,
 }
 
-/// Solicitud de trabajo enviada por el head al worker.
+/// Work request sent by the head to the worker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkRequest {
     pub task_id: Uuid,
@@ -46,9 +46,9 @@ pub struct RunningResponse {
 pub struct FinishedWork {
     pub task_id: Uuid,
     pub work_type: WorkType,
-    /// Nombre final que debe tener el resultado en el head (p. ej. "pelicula.mp4").
+    /// Final name the result must have on the head (e.g. "pelicula.mp4").
     pub filename: String,
-    /// Para CrfSearch: el CRF encontrado (o NO_CRF_METADATA). Para Encode: vacío.
+    /// For CrfSearch: the found CRF (or NO_CRF_METADATA). For Encode: empty.
     pub metadata: String,
     pub status: WorkStatus,
     pub error: String,
