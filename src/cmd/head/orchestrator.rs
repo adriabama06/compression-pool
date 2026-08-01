@@ -201,7 +201,7 @@ impl Orchestrator {
                     args.push("-crf".into());
                     args.push(crf.to_string());
                     let mut encode = Task::new(task.filename.clone(), WorkType::Encode, args);
-                    encode.affinity = Some(worker); // the file is already on that worker
+                    encode.preferred_worker = Some(worker); // the file is already on that worker
                     tracing::info!("{}: CRF {crf} found; queuing encode", task.filename);
                     self.queues.encode.push_back(encode);
                 }
@@ -334,7 +334,7 @@ impl Orchestrator {
                     Ok(SendOutcome::Busy) => {
                         // It did not accept: release affinity and requeue.
                         let mut task = task;
-                        task.affinity = None;
+                        task.preferred_worker = None;
                         self.queues.requeue_front(task);
                         break;
                     }
@@ -345,7 +345,7 @@ impl Orchestrator {
                         // Ambiguous response: keep affinity with this worker.
                         tracing::warn!("ambiguous send to worker {i}: {e:#}");
                         let mut task = task;
-                        task.affinity = Some(i);
+                        task.preferred_worker = Some(i);
                         self.queues.requeue_front(task);
                     }
                 }

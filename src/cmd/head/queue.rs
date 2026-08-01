@@ -17,7 +17,7 @@ pub struct Task {
     pub attempts: u32,
     /// Index of the preferred worker (e.g. after an ambiguous response or after
     /// a CRF search whose upload is already on that worker).
-    pub affinity: Option<usize>,
+    pub preferred_worker: Option<usize>,
 }
 
 impl Task {
@@ -28,7 +28,7 @@ impl Task {
             work_type,
             arguments,
             attempts: 0,
-            affinity: None,
+            preferred_worker: None,
         }
     }
 }
@@ -42,8 +42,8 @@ pub struct Queues {
 
 impl Queues {
     /// Pops the next schedulable task for `worker`:
-    /// Encode first, then CrfSearch; first with affinity to this worker,
-    /// then without affinity.
+    /// Encode first, then CrfSearch; first with preferred_worker to this worker,
+    /// then without preferred_worker.
     pub fn pop_for(&mut self, worker: usize) -> Option<Task> {
         pop_from(&mut self.encode, worker).or_else(|| pop_from(&mut self.crf_search, worker))
     }
@@ -56,8 +56,18 @@ impl Queues {
     }
 
     pub fn remove(&mut self, id: &Uuid) -> Option<Task> {
+        // For each queue
+        /* (I'm still learning Rust, so example in JavaScript)
+        let list_a = [1,2,3];
+        let list_b = [7,8,9];
+
+        [list_a, list_b].forEach(list => list[0] += list[1] + list[2]);
+        */
         for q in [&mut self.encode, &mut self.crf_search] {
+            // Remove the one that has this ID
             if let Some(pos) = q.iter().position(|t| &t.id == id) {
+                // &t.id == id compares &Uuid with &Uuid using PartialEq  derefs and compares the Uuid values,
+                // like C++ operator==(const Uuid& a, const Uuid& b) — not operator==(Uuid a, Uuid b) which would copy.
                 return q.remove(pos);
             }
         }
@@ -70,11 +80,15 @@ impl Queues {
 }
 
 fn pop_from(q: &mut VecDeque<Task>, worker: usize) -> Option<Task> {
+    // Get the pos of the first Task that:
+    // 1. Has preference to this worker
+    // 2. Has no preference to no stole a task from other worker    
     let pos = q
         .iter()
-        .position(|t| t.affinity == Some(worker))
-        .or_else(|| q.iter().position(|t| t.affinity.is_none()))?;
-    q.remove(pos)
+        .position(|t| t.preferred_worker == Some(worker))
+        .or_else(|| q.iter().position(|t| t.preferred_worker.is_none()))?;
+
+    q.remove(pos) // Remove the Task from the list and return the Task to the requester worker
 }
 
 #[cfg(test)]
@@ -83,7 +97,7 @@ mod tests {
 
     fn task(ty: WorkType, affinity: Option<usize>) -> Task {
         let mut t = Task::new("v.mkv".into(), ty, vec![]);
-        t.affinity = affinity;
+        t.preferred_worker = affinity;
         t
     }
 
@@ -105,6 +119,6 @@ mod tests {
         assert!(q.pop_for(0).is_some());
         assert!(q.pop_for(0).is_none());
         // Worker 1 takes its own.
-        assert_eq!(q.pop_for(1).unwrap().affinity, Some(1));
+        assert_eq!(q.pop_for(1).unwrap().preferred_worker, Some(1));
     }
 }
