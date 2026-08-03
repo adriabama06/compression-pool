@@ -51,7 +51,7 @@ pub fn split_args(s: &str) -> Result<Vec<String>> {
 
 /// Checks whether the ffmpeg arguments already fix quality/rate (-crf or -b:v),
 /// whether separate ("-crf", "24") or combined ("-crf=24", "-b:v=1M").
-pub fn args_fix_quality(args: &[String]) -> bool {
+pub fn args_fixed_quality(args: &[String]) -> bool {
     args.iter().any(|a| {
         a == "-crf" || a.starts_with("-crf") || a == "-b:v" || a.starts_with("-b:v")
     })
@@ -120,11 +120,11 @@ mod tests {
 
     #[test]
     fn detects_quality_args() {
-        assert!(args_fix_quality(&["-crf".into(), "24".into()]));
-        assert!(args_fix_quality(&["-crf=24".into()]));
-        assert!(args_fix_quality(&["-preset".into(), "6".into(), "-b:v".into(), "1M".into()]));
-        assert!(args_fix_quality(&["-b:v=2M".into()]));
-        assert!(!args_fix_quality(&["-preset".into(), "6".into(), "-c:v".into(), "libsvtav1".into()]));
-        assert!(!args_fix_quality(&[]));
+        assert!(args_fixed_quality(&["-crf".into(), "24".into()]));
+        assert!(args_fixed_quality(&["-crf=24".into()]));
+        assert!(args_fixed_quality(&["-preset".into(), "6".into(), "-b:v".into(), "1M".into()]));
+        assert!(args_fixed_quality(&["-b:v=2M".into()]));
+        assert!(!args_fixed_quality(&["-preset".into(), "6".into(), "-c:v".into(), "libsvtav1".into()]));
+        assert!(!args_fixed_quality(&[]));
     }
 }

@@ -37,10 +37,10 @@ impl Orchestrator {
         let videos = crate::paths::scan_videos(&config.input_folder)?;
         crate::paths::check_output_collisions(&videos, &config.container)?;
 
-        let skip_crf = crate::config::args_fix_quality(&config.ffmpeg_args);
+        let has_fixed_quality = crate::config::args_fixed_quality(&config.ffmpeg_args);
         let mut queues = Queues::default();
         for v in videos {
-            if skip_crf {
+            if has_fixed_quality {
                 queues
                     .encode
                     .push_back(Task::new(v, WorkType::Encode, config.ffmpeg_args.clone()));
@@ -55,7 +55,7 @@ impl Orchestrator {
             .workers
             .iter()
             .map(|w| WorkerClient::new(w))
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<Vec<WorkerClient>>>()?;
 
         Ok(Self {
             config,
@@ -69,15 +69,18 @@ impl Orchestrator {
     /// Waits until all configured workers respond to /health.
     async fn wait_all_healthy(&self) {
         loop {
+            // Add to pending only the clients that give error on health check, so if all clients are ok pending will be empty and the pending.is_empty() will let the code exit
             let mut pending = Vec::new();
             for (i, c) in self.clients.iter().enumerate() {
                 if c.health().await.is_err() {
                     pending.push(self.config.workers[i].clone());
                 }
             }
+
             if pending.is_empty() {
                 return;
             }
+
             tracing::info!(?pending, "waiting for all workers to respond");
             tokio::time::sleep(POLL_INTERVAL).await;
         }
@@ -88,7 +91,8 @@ impl Orchestrator {
         tracing::info!("all workers available; scheduling begins");
 
         while !self.queues.is_empty() || !self.active.is_empty() {
-            let snapshots = self.poll_workers().await;
+            // snapshots equivalent to the status of the workers, snapshots is a vector of the status of the worker (the running works and the finished works).
+            let snapshots: Vec<Option<(crate::types::RunningResponse, crate::types::FinishedResponse)>> = self.poll_workers().await;
             self.adopt_and_track(&snapshots);
             self.handle_finished(&snapshots).await;
             self.resend_missing(&snapshots).await;
@@ -137,9 +141,9 @@ impl Orchestrator {
                 running.works.iter().any(|w| &w.id == id)
                     || finished.finished.iter().any(|f| &f.task_id == id)
             };
-            for a in self.active.values_mut() {
-                if a.worker == i && observed(&a.task.id) {
-                    a.missing_since = None;
+            for active in self.active.values_mut() {
+                if active.worker == i && observed(&active.task.id) {
+                    active.missing_since = None;
                 }
             }
         }
@@ -152,28 +156,28 @@ impl Orchestrator {
     ) {
         for (i, snap) in snapshots.iter().enumerate() {
             let Some((_, finished)) = snap else { continue };
-            for f in &finished.finished {
-                let Some(active) = self.active.get(&f.task_id) else { continue };
+            for finished in &finished.finished {
+                let Some(active) = self.active.get(&finished.task_id) else { continue };
                 if active.worker != i {
                     continue;
                 }
                 // Verify the result matches the expected task type and file.
-                if f.work_type != active.task.work_type {
-                    tracing::warn!(task = %f.task_id, "result with unexpected type; ignoring");
+                if finished.work_type != active.task.work_type {
+                    tracing::warn!(task = %finished.task_id, "result with unexpected type; ignoring");
                     continue;
                 }
                 let task = active.task.clone();
-                match f.status {
+                match finished.status {
                     WorkStatus::Succeeded => {
-                        if let Err(e) = self.handle_success(i, &task, f).await {
+                        if let Err(e) = self.handle_success(i, &task, finished).await {
                             tracing::error!("error processing result: {e:#}");
                         }
-                        self.active.remove(&f.task_id);
+                        self.active.remove(&finished.task_id);
                     }
                     WorkStatus::Failed => {
-                        self.active.remove(&f.task_id);
-                        let _ = self.clients[i].clear(f.task_id).await;
-                        self.retry_or_fail(task, &f.error);
+                        self.active.remove(&finished.task_id);
+                        let _ = self.clients[i].clear(finished.task_id).await;
+                        self.retry_or_fail(task, &finished.error);
                     }
                 }
             }
@@ -294,16 +298,16 @@ impl Orchestrator {
     ) {
         let ids: Vec<Uuid> = self.active.keys().cloned().collect();
         for id in ids {
-            let Some(a) = self.active.get_mut(&id) else { continue };
-            if snapshots.get(a.worker).and_then(|s| s.as_ref()).is_none() {
+            let Some(active) = self.active.get_mut(&id) else { continue };
+            if snapshots.get(active.worker).and_then(|s| s.as_ref()).is_none() {
                 continue; // worker down: wait until a poll where it returns
             }
-            let missing_since = a.missing_since.get_or_insert_with(Instant::now);
+            let missing_since = active.missing_since.get_or_insert_with(Instant::now);
             if missing_since.elapsed() < MISSING_TIMEOUT {
                 continue;
             }
-            let task = a.task.clone();
-            let worker = a.worker;
+            let task = active.task.clone();
+            let worker = active.worker;
             tracing::warn!(task = %id, worker, "task disappeared; resending with the same task_id");
             match self.dispatch(worker, &task).await {
                 Ok(SendOutcome::Accepted) => {
@@ -364,9 +368,10 @@ impl Orchestrator {
             arguments: task.arguments.clone(),
             container: self.config.container.clone(),
         };
-        match task.work_type {
+        
+        return match task.work_type {
             WorkType::CrfSearch => client.send_crf_search(&req).await,
             WorkType::Encode => client.send_encode(&req).await,
-        }
+        };
     }
 }

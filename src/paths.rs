@@ -46,18 +46,21 @@ pub fn is_video(name: &str) -> bool {
 
 /// Output filename: same base name with the container extension.
 pub fn output_name(input: &str, container: &str) -> String {
-    let stem = match input.rsplit_once('.') {
-        Some((stem, _)) => stem,
+    let filename = match input.rsplit_once('.') {
+        Some((fname, _)) => fname,
         None => input,
     };
-    format!("{stem}.{container}")
+    format!("{filename}.{container}")
 }
 
 /// Returns an error if two videos would generate the same output name.
 pub fn check_output_collisions(files: &[String], container: &str) -> Result<()> {
     let mut seen: HashMap<String, &str> = HashMap::new();
+
     for f in files {
         let out = output_name(f, container).to_ascii_lowercase();
+
+        // If I can get some prev (if hashmap has repeated key it returns the previous value before the remplace for the new value)
         if let Some(prev) = seen.insert(out.clone(), f) {
             bail!(
                 "output collision: {prev:?} and {f:?} would both generate {out:?}"

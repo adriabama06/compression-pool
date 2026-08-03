@@ -141,6 +141,7 @@ pub async fn clear(
 ) -> StatusCode {
     let exists = {
         let mut works = state.works.lock().await;
+
         works.finished.remove(&req.task_id).is_some()
     };
     if exists {
