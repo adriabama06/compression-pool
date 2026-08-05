@@ -15,7 +15,7 @@ permissions:
 jobs:
   build-linux-x64:
     name: Build Linux x64
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -46,7 +46,7 @@ jobs:
 
   build-linux-arm64:
     name: Build Linux arm64
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest-arm
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -82,7 +82,7 @@ jobs:
 
   build-windows-x64:
     name: Build Windows x64
-    runs-on: windows-11
+    runs-on: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -109,7 +109,7 @@ jobs:
 
   build-windows-arm64:
     name: Build Windows arm64
-    runs-on: windows-11-arm
+    runs-on: windows-latest-arm
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -142,7 +142,7 @@ jobs:
   release:
     name: Attach binaries to release
     needs: [build-linux-x64, build-linux-arm64, build-windows-x64, build-windows-arm64]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: github.event_name == 'release'
     steps:
       - name: Download all artifacts
