@@ -14,37 +14,8 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.name }}
+    name: Build all targets
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Linux x64
-            target: x86_64-unknown-linux-gnu
-            method: native
-            bin: compression-pool
-            out: compression-pool-linux-x64
-            artifact: linux-x64
-          - name: Linux arm64
-            target: aarch64-unknown-linux-gnu
-            method: cross
-            bin: compression-pool
-            out: compression-pool-linux-arm64
-            artifact: linux-arm64
-          - name: Windows x64
-            target: x86_64-pc-windows-msvc
-            method: xwin
-            bin: compression-pool.exe
-            out: compression-pool-windows-x64.exe
-            artifact: windows-x64
-          - name: Windows arm64
-            target: aarch64-pc-windows-msvc
-            method: xwin
-            bin: compression-pool.exe
-            out: compression-pool-windows-arm64.exe
-            artifact: windows-arm64
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -52,42 +23,42 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-pc-windows-msvc
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
 
       - name: Install cross
-        if: matrix.method == 'cross'
         uses: taiki-e/install-action@cross
 
       - name: Install cargo-xwin
-        if: matrix.method == 'xwin'
         uses: taiki-e/install-action@cargo-xwin
 
-      - name: Build (native)
-        if: matrix.method == 'native'
-        run: cargo build --release --target "${{ matrix.target }}" -j "$(nproc)"
+      - name: Build Linux x64
+        run: cargo build --release -j "$(nproc)" --target x86_64-unknown-linux-gnu
 
-      - name: Build (cross)
-        if: matrix.method == 'cross'
-        run: cross build --release --target "${{ matrix.target }}" -j "$(nproc)"
+      - name: Build Linux arm64
+        run: cross build --release -j "$(nproc)" --target aarch64-unknown-linux-gnu
 
-      - name: Build (xwin)
-        if: matrix.method == 'xwin'
-        run: cargo xwin build --release --target "${{ matrix.target }}"
+      - name: Build Windows x64
+        run: cargo xwin build --release --target x86_64-pc-windows-msvc
 
-      - name: Rename file
+      - name: Build Windows arm64
+        run: cargo xwin build --release --target aarch64-pc-windows-msvc
+
+      - name: Stage binaries
         run: |
-          mv "target/${{ matrix.target }}/release/${{ matrix.bin }}" "${{ matrix.out }}"
+          mkdir -p dist
+          mv target/x86_64-unknown-linux-gnu/release/compression-pool dist/compression-pool-linux-x64
+          mv target/aarch64-unknown-linux-gnu/release/compression-pool dist/compression-pool-linux-arm64
+          mv target/x86_64-pc-windows-msvc/release/compression-pool.exe dist/compression-pool-windows-x64.exe
+          mv target/aarch64-pc-windows-msvc/release/compression-pool.exe dist/compression-pool-windows-arm64.exe
 
-      - name: Upload artifact
+      - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.out }}
+          name: binaries
+          path: dist
 
   release:
     name: Attach binaries to release
