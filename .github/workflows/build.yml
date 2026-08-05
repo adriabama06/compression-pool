@@ -46,6 +46,7 @@ jobs:
 
   build-linux-arm64:
     name: Build Linux arm64
+    needs: build-linux-x64
     runs-on: ubuntu-latest-arm
     steps:
       - name: Checkout repository
@@ -82,6 +83,7 @@ jobs:
 
   build-windows-x64:
     name: Build Windows x64
+    needs: build-linux-arm64
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -109,6 +111,7 @@ jobs:
 
   build-windows-arm64:
     name: Build Windows arm64
+    needs: build-windows-x64
     runs-on: windows-latest-arm
     steps:
       - name: Checkout repository
@@ -141,7 +144,7 @@ jobs:
 
   release:
     name: Attach binaries to release
-    needs: [build-linux-x64, build-linux-arm64, build-windows-x64, build-windows-arm64]
+    needs: build-windows-arm64
     runs-on: ubuntu-latest
     if: github.event_name == 'release'
     steps:
