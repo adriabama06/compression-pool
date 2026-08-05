@@ -8,7 +8,14 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "compression-pool", about = "Distributed video compression")]
+#[command(
+    name = "compression-pool",
+    about = concat!(
+        "compression-pool v",
+        env!("CARGO_PKG_VERSION"),
+        " | Distributed video compression"
+    )
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
