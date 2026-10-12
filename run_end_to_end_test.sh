@@ -17,6 +17,13 @@ for tool in ffmpeg ab-av1; do
     fi
 done
 
+if [ ! -f "$REPO_DIR/sample.mp4" ]; then
+    echo "==> sample.mp4 missing; generating a synthetic one with ffmpeg"
+    ffmpeg -y -f lavfi -i testsrc=duration=5:size=1280x720:rate=30 \
+        -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
+        "$REPO_DIR/sample.mp4"
+fi
+
 echo "==> building binary"
 cargo build --manifest-path "$REPO_DIR/Cargo.toml"
 
