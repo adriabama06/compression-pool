@@ -43,6 +43,14 @@ jobs:
       - name: Run end-to-end test
         run: bash run_end_to_end_test.sh
 
+      - name: Print e2e logs
+        if: always()
+        run: |
+          echo '===== tmp/head.log ====='
+          cat tmp/head.log || echo '(missing tmp/head.log)'
+          echo '===== tmp/worker/worker.log ====='
+          cat tmp/worker/worker.log || echo '(missing tmp/worker/worker.log)'
+
       - name: Upload e2e logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
