@@ -34,6 +34,7 @@ pub async fn load(
     Query(params): Query<LoadParams>,
     mut multipart: Multipart,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    tracing::info!("head is loading task {}...", params.task_id);
     while let Some(mut field) = multipart
         .next_field()
         .await
@@ -41,8 +42,10 @@ pub async fn load(
     {
         match field.name() {
             Some("file") => {
-                if let Some(fname) = field.file_name() {
-                    crate::paths::validate_filename(fname)
+                let fname = field.file_name().unwrap_or("<unknown>").to_string();
+                tracing::info!("head is loading file {fname} (task {})...", params.task_id);
+                if field.file_name().is_some() {
+                    crate::paths::validate_filename(&fname)
                         .map_err(|e| err(StatusCode::BAD_REQUEST, e.to_string()))?;
                 }
 
@@ -63,6 +66,7 @@ pub async fn load(
                 .await;
 
                 if let Err(e) = write_result {
+                    tracing::warn!("failed loading file {fname} (task {}): {e}", params.task_id);
                     let _ = tokio::fs::remove_file(&tmp).await;
                     return Err(err(StatusCode::INTERNAL_SERVER_ERROR, e));
                 }
@@ -71,12 +75,14 @@ pub async fn load(
                     .await
                     .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+                tracing::info!("loaded file {fname} (task {}), stored by task id", params.task_id);
                 return Ok(StatusCode::OK);
             }
             _ => {}
         }
     }
 
+    tracing::warn!("load for task {} arrived without file field", params.task_id);
     Err(err(StatusCode::BAD_REQUEST, "missing file field"))
 }
 
@@ -113,10 +119,14 @@ pub async fn download(
             {
                 f.filename.clone()
             }
-            _ => return Err(err(StatusCode::NOT_FOUND, "result not available")),
+            _ => {
+                tracing::warn!("head requested download of task {id}, but result is not available");
+                return Err(err(StatusCode::NOT_FOUND, "result not available"));
+            }
         }
     };
 
+    tracing::info!("head is downloading result file {final_name} (task {id})...");
     let file = tokio::fs::File::open(finished_path(&id))
         .await
         .map_err(|_| err(StatusCode::NOT_FOUND, "result file not found"))?;
@@ -139,12 +149,22 @@ pub async fn clear(
     State(state): State<Shared>,
     Json(req): Json<ClearRequest>,
 ) -> StatusCode {
-    let exists = {
+    let removed = {
         let mut works = state.works.lock().await;
 
-        works.finished.remove(&req.task_id).is_some()
+        works.finished.remove(&req.task_id)
     };
-    if exists {
+    match &removed {
+        Some(f) => tracing::info!(
+            "head requested removal of task {} (file {}, {:?}); cleaning loaded/finished files",
+            req.task_id, f.filename, f.work_type
+        ),
+        None => tracing::info!(
+            "head requested removal of task {}; already gone (idempotent)",
+            req.task_id
+        ),
+    }
+    if removed.is_some() {
         let _ = tokio::fs::remove_file(finished_path(&req.task_id)).await;
         let _ = tokio::fs::remove_file(loaded_path(&req.task_id)).await;
     }

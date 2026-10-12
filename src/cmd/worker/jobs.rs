@@ -89,10 +89,31 @@ pub async fn crf_search(
     State(state): State<Shared>,
     Json(req): Json<WorkRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    reserve(&state, WorkType::CrfSearch, &req).await?;
+    tracing::info!(
+        "head requested me to process file {} (task {}) doing crf-search",
+        req.filename, req.task_id
+    );
+    if let Err(e) = reserve(&state, WorkType::CrfSearch, &req).await {
+        tracing::warn!("rejecting crf-search for file {} (task {}): {}", req.filename, req.task_id, e.1);
+        return Err(e);
+    }
+    tracing::info!(
+        "accepted crf-search for file {} (task {}); processing...",
+        req.filename, req.task_id
+    );
     let st = state.clone();
     tokio::spawn(async move {
         let result = run_crf_search(&req).await;
+        match result.status {
+            WorkStatus::Succeeded => tracing::info!(
+                "finished processing file {} (task {}) doing crf-search: succeeded (metadata: {})",
+                result.filename, result.task_id, result.metadata
+            ),
+            WorkStatus::Failed => tracing::warn!(
+                "finished processing file {} (task {}) doing crf-search: failed ({})",
+                result.filename, result.task_id, result.error
+            ),
+        }
         publish(&st, result).await;
     });
     Ok(StatusCode::ACCEPTED)
@@ -102,10 +123,31 @@ pub async fn encode(
     State(state): State<Shared>,
     Json(req): Json<WorkRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    reserve(&state, WorkType::Encode, &req).await?;
+    tracing::info!(
+        "head requested me to process file {} (task {}) doing encode to .{}",
+        req.filename, req.task_id, req.container
+    );
+    if let Err(e) = reserve(&state, WorkType::Encode, &req).await {
+        tracing::warn!("rejecting encode for file {} (task {}): {}", req.filename, req.task_id, e.1);
+        return Err(e);
+    }
+    tracing::info!(
+        "accepted encode for file {} (task {}); processing...",
+        req.filename, req.task_id
+    );
     let st = state.clone();
     tokio::spawn(async move {
         let result = run_encode(&req).await;
+        match result.status {
+            WorkStatus::Succeeded => tracing::info!(
+                "finished processing file {} (task {}) doing encode: succeeded (output: {})",
+                req.filename, result.task_id, result.filename
+            ),
+            WorkStatus::Failed => tracing::warn!(
+                "finished processing file {} (task {}) doing encode: failed ({})",
+                req.filename, result.task_id, result.error
+            ),
+        }
         publish(&st, result).await;
     });
     Ok(StatusCode::ACCEPTED)

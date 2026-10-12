@@ -23,12 +23,45 @@ struct ActiveTask {
     missing_since: Option<Instant>,
 }
 
+struct CompletedEntry {
+    /// Original input filename (e.g. "video.mkv").
+    input: String,
+    /// Final output filename (e.g. "video.mp4"; same as input when copied).
+    output: String,
+    original_bytes: u64,
+    result_bytes: u64,
+}
+
 pub struct Orchestrator {
     config: Config,
     clients: Vec<WorkerClient>,
     queues: Queues,
     active: HashMap<Uuid, ActiveTask>,
     failures: Vec<(String, String)>,
+    completed: Vec<CompletedEntry>,
+}
+
+fn human_bytes(n: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let f = n as f64;
+    if f >= GB {
+        format!("{:.2} GiB ({n} B)", f / GB)
+    } else if f >= MB {
+        format!("{:.2} MiB ({n} B)", f / MB)
+    } else if f >= KB {
+        format!("{:.2} KiB ({n} B)", f / KB)
+    } else {
+        format!("{n} B")
+    }
+}
+
+fn percent_of(result: u64, original: u64) -> String {
+    if original == 0 {
+        return "n/a".to_string();
+    }
+    format!("{:.1}%", result as f64 * 100.0 / original as f64)
 }
 
 impl Orchestrator {
@@ -37,10 +70,9 @@ impl Orchestrator {
         let videos = crate::paths::scan_videos(&config.input_folder)?;
         crate::paths::check_output_collisions(&videos, &config.container)?;
 
-        let has_fixed_quality = crate::config::args_fixed_quality(&config.ffmpeg_args);
         let mut queues = Queues::default();
         for v in videos {
-            if has_fixed_quality {
+            if crate::config::args_fixed_quality(&config.ffmpeg_args) {
                 queues
                     .encode
                     .push_back(Task::new(v, WorkType::Encode, config.ffmpeg_args.clone()));
@@ -63,6 +95,7 @@ impl Orchestrator {
             queues,
             active: HashMap::new(),
             failures: Vec::new(),
+            completed: Vec::new(),
         })
     }
 
@@ -87,6 +120,7 @@ impl Orchestrator {
     }
 
     pub async fn run(mut self) -> Result<()> {
+        self.log_plan();
         self.wait_all_healthy().await;
         tracing::info!("all workers available; scheduling begins");
 
@@ -100,6 +134,7 @@ impl Orchestrator {
             tokio::time::sleep(POLL_INTERVAL).await;
         }
 
+        self.log_summary();
         if !self.failures.is_empty() {
             for (f, why) in &self.failures {
                 tracing::error!("failure on {f}: {why}");
@@ -108,6 +143,67 @@ impl Orchestrator {
         }
         tracing::info!("all videos processed successfully");
         Ok(())
+    }
+
+    /// Startup banner: mode, files to process and workers to use.
+    fn log_plan(&self) {
+        if crate::config::args_fixed_quality(&self.config.ffmpeg_args) {
+            tracing::info!(
+                "mode: direct encode will be used (ffmpeg-arguments fix quality with -crf/-b:v, skipping ab-av1 crf-search)"
+            );
+        } else {
+            tracing::info!(
+                "mode: crf-search will be used (ffmpeg-arguments do not fix quality, running ab-av1 crf-search first, then encode)"
+            );
+        }
+        tracing::info!("container: {}", self.config.container);
+        let mut files: Vec<&String> = self
+            .queues
+            .encode
+            .iter()
+            .map(|t| &t.filename)
+            .chain(self.queues.crf_search.iter().map(|t| &t.filename))
+            .collect();
+        files.sort();
+        tracing::info!("files to process ({}):", files.len());
+        for f in files {
+            let size = std::fs::metadata(self.config.input_folder.join(f))
+                .map(|m| m.len())
+                .unwrap_or(0);
+            tracing::info!("  - {f} ({})", human_bytes(size));
+        }
+        tracing::info!("workers to use ({}):", self.config.workers.len());
+        for (i, w) in self.config.workers.iter().enumerate() {
+            tracing::info!("  - worker {i}: {w}");
+        }
+    }
+
+    /// Final summary: per-file original -> result sizes and totals.
+    fn log_summary(&mut self) {
+        self.completed.sort_by(|a, b| a.input.cmp(&b.input));
+        tracing::info!("summary: {} file(s) processed successfully", self.completed.len());
+        let mut total_orig: u64 = 0;
+        let mut total_res: u64 = 0;
+        for c in &self.completed {
+            total_orig += c.original_bytes;
+            total_res += c.result_bytes;
+            tracing::info!(
+                "  {} -> {}: {} -> {} ({} of original)",
+                c.input,
+                c.output,
+                human_bytes(c.original_bytes),
+                human_bytes(c.result_bytes),
+                percent_of(c.result_bytes, c.original_bytes)
+            );
+        }
+        if !self.completed.is_empty() {
+            tracing::info!(
+                "total: {} -> {} ({} of original)",
+                human_bytes(total_orig),
+                human_bytes(total_res),
+                percent_of(total_res, total_orig)
+            );
+        }
     }
 
     /// Polls /running and /finished of each worker without a failure blocking the others.
@@ -185,6 +281,7 @@ impl Orchestrator {
     }
 
     async fn handle_success(&mut self, worker: usize, task: &Task, f: &FinishedWork) -> Result<()> {
+        let worker_url = self.config.workers.get(worker).cloned().unwrap_or_else(|| format!("worker {worker}"));
         match task.work_type {
             WorkType::CrfSearch => {
                 if f.metadata == NO_CRF_METADATA {
@@ -192,7 +289,19 @@ impl Orchestrator {
                     let src = self.config.input_folder.join(&task.filename);
                     let dst = self.config.output_folder.join(&task.filename);
                     tokio::fs::copy(&src, &dst).await?;
-                    tracing::info!("{}: no suitable CRF; original copied to output", task.filename);
+                    let orig = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
+                    let res = tokio::fs::metadata(&dst).await.map(|m| m.len()).unwrap_or(orig);
+                    self.completed.push(CompletedEntry {
+                        input: task.filename.clone(),
+                        output: task.filename.clone(),
+                        original_bytes: orig,
+                        result_bytes: res,
+                    });
+                    tracing::info!(
+                        "{} (task {}): no suitable CRF reported by {} (crf-search finished); original copied to output ({} -> {})",
+                        task.filename, task.id, worker_url,
+                        human_bytes(orig), human_bytes(res)
+                    );
                 } else {
                     let crf: u32 = f
                         .metadata
@@ -206,15 +315,20 @@ impl Orchestrator {
                     args.push(crf.to_string());
                     let mut encode = Task::new(task.filename.clone(), WorkType::Encode, args);
                     encode.preferred_worker = Some(worker); // the file is already on that worker
-                    tracing::info!("{}: CRF {crf} found; queuing encode", task.filename);
+                    tracing::info!(
+                        "{} (task {}): CRF {crf} found by {} (crf-search finished); queuing encode",
+                        task.filename, task.id, worker_url
+                    );
                     self.queues.encode.push_back(encode);
                 }
                 // The crf-search result has already been processed: clean up.
+                tracing::info!("requesting {} to remove crf-search result for {} (task {})", worker_url, task.filename, task.id);
                 self.clients[worker].clear(task.id).await?;
             }
             WorkType::Encode => {
                 self.download_and_publish(worker, task, f).await?;
                 // Only after publishing successfully is the worker cleaned up.
+                tracing::info!("requesting {} to remove finished encode for {} (task {})", worker_url, task.filename, task.id);
                 self.clients[worker].clear(task.id).await?;
             }
         }
@@ -224,12 +338,17 @@ impl Orchestrator {
     /// Downloads the result (with retries) to a temporary file in outputs/, copies
     /// the original timestamps and atomically renames to the final destination.
     async fn download_and_publish(
-        &self,
+        &mut self,
         worker: usize,
         task: &Task,
         f: &FinishedWork,
     ) -> Result<()> {
         crate::paths::validate_filename(&f.filename)?;
+        let worker_url = self.config.workers.get(worker).cloned().unwrap_or_else(|| format!("worker {worker}"));
+        tracing::info!(
+            "{} (task {}): encode finished on {}; downloading result to head...",
+            task.filename, task.id, worker_url
+        );
         let tmp = self
             .config
             .output_folder
@@ -259,10 +378,12 @@ impl Orchestrator {
             let _ = tokio::fs::remove_file(&tmp).await;
             bail!("downloaded result is empty");
         }
+        let result_bytes = meta.len();
 
         // Copy access and modification timestamps of the original file.
         let original = self.config.input_folder.join(&task.filename);
         let orig_meta = std::fs::metadata(&original)?;
+        let original_bytes = orig_meta.len();
         filetime::set_file_times(
             &tmp,
             filetime::FileTime::from_last_access_time(&orig_meta),
@@ -271,7 +392,18 @@ impl Orchestrator {
 
         let dest: PathBuf = self.config.output_folder.join(&f.filename);
         tokio::fs::rename(&tmp, &dest).await?;
-        tracing::info!("{} published to {}", task.filename, dest.display());
+        self.completed.push(CompletedEntry {
+            input: task.filename.clone(),
+            output: f.filename.clone(),
+            original_bytes,
+            result_bytes,
+        });
+        tracing::info!(
+            "{} (task {}) downloaded from {} and stored as {}: {} -> {} ({} of original)",
+            task.filename, task.id, worker_url, dest.display(),
+            human_bytes(original_bytes), human_bytes(result_bytes),
+            percent_of(result_bytes, original_bytes)
+        );
         Ok(())
     }
 
@@ -360,8 +492,21 @@ impl Orchestrator {
     /// Uploads the file (if applicable) and sends the work request.
     async fn dispatch(&self, worker: usize, task: &Task) -> Result<SendOutcome> {
         let client = &self.clients[worker];
+        let worker_url = self.config.workers.get(worker).cloned().unwrap_or_else(|| format!("worker {worker}"));
+        let kind = match task.work_type {
+            WorkType::CrfSearch => "crf-search",
+            WorkType::Encode => "encode",
+        };
+        tracing::info!(
+            "sending {} (task {}) to {}: uploading...",
+            task.filename, task.id, worker_url
+        );
         let input = self.config.input_folder.join(&task.filename);
         client.upload(task.id, &task.filename, &input).await?;
+        tracing::info!(
+            "requesting {} to perform {} on {} (task {})",
+            worker_url, kind, task.filename, task.id
+        );
         let req = WorkRequest {
             task_id: task.id,
             filename: task.filename.clone(),
