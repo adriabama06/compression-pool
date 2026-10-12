@@ -18,8 +18,24 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install ffmpeg (full build via ffmpeg-vm)
+        # NOTE: apt's ffmpeg lacks libvmaf, so use a full static build
+        # managed by ffmpeg-version-manager (installs into ~/ffmpeg-vm/bin
+        # and appends it to ~/.bashrc, which CI steps don't source).
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/ffmpeg-version-manager https://github.com/adriabama06/ffmpeg-version-manager/releases/download/v0.1.9/ffmpeg-version-manager
+          chmod +x /tmp/ffmpeg-version-manager
+          /tmp/ffmpeg-version-manager -i latest
+          echo "$HOME/ffmpeg-vm/bin" >> "$GITHUB_PATH"
+          for b in "$HOME"/ffmpeg-vm/bin/*; do
+            sudo ln -sf "$b" /usr/local/bin/"$(basename "$b")"
+          done
+          export PATH="$HOME/ffmpeg-vm/bin:$PATH"
+          hash -r
+          which -a ffmpeg
+          ffmpeg -version
+          ffmpeg -hide_banner -filters 2>/dev/null | grep -i vmaf
 
       - name: Install ab-av1
         run: cargo install ab-av1 --locked
